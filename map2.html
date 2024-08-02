@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>COVID-19 Map with Gradient Colors</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <link rel="stylesheet" href="map2.css" />
+</head>
+<body>
+    <div class="container">
+        <div id="map"></div>
+        <div class="country-data" id="countryData">
+            <!-- Progress bar container -->
+            <div class="progress-bar-container">
+                <div class="progress-bar">
+                    <div class="progress-bar-value" id="progressBarValue">
+                        <span id="progressBarText"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="form-container">
+        <form id="paramForm">
+            <label for="yesterday">Data from:</label>
+            <select id="yesterday" name="yesterday">
+                <option value="yesterday">Yesterday</option>
+                <option value="twoDaysAgo">Two Days Ago</option>
+                <option value="yearAgo">Year Ago</option>
+            </select>
+            <input type="submit" value="Submit">
+        </form>
+    </div>
+
+    
+
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script>
+        const apiUrl = 'https://disease.sh/v3/covid-19/countries';
+        const geoJsonUrl = 'https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson';
+
+        let selectedCountry = '';
+
+        // Function to fetch data from the API
+        async function fetchData(url) {
+            try {
+                console.log(`Fetching data from ${url}`);
+                const response = await fetch(url);
+                const data = await response.json();
+                console.log(`Data fetched from ${url}`, data);
+                return data;
+            } catch (error) {
+                console.error('Error fetching data from the API:', error);
+            }
+        }
+
+        // Function to determine color scale based on min and max cases
+        function getColorScale(cases, minCases, maxCases) {
+            const colorScale = d3.scaleLinear()
+                .domain([minCases, maxCases])
+                .range(['#FFFFFF', '#800026']); // White to dark red
+            return colorScale(cases);
+        }
+
+        // Initialize the map
+        const map = L.map('map').setView([20, 0], 2);
+
+        // Function to style each country
+        function style(feature) {
+            const countryData = covidData.find(country => country.countryInfo.iso3 === feature.properties.ISO_A3);
+            const cases = countryData ? countryData.cases : 0;
+            return {
+                fillColor: getColorScale(cases, minCases, maxCases),
+                weight: 1,
+                opacity: 1,
+                color: 'black',
+                dashArray: '3',
+                fillOpacity: 0.7
+            };
+        }
+
+        // Function to handle hover and click events on each country
+        function onEachFeature(feature, layer) {
+            layer.on({
+                mouseover: function (e) {
+                    const countryData = covidData.find(country => country.countryInfo.iso3 === feature.properties.ISO_A3);
+                    const countryInfo = countryData ? `
+                        <b>Country:</b> ${countryData.country}<br>
+                        <b>Total Cases:</b> ${countryData.cases}<br>
+                        <b>Active Cases:</b> ${countryData.active}<br>
+                        <b>Recovered Cases:</b> ${countryData.recovered}<br>
+                        <b>Deaths:</b> ${countryData.deaths}
+                    ` : 'No data available';
+                    layer.bindTooltip(countryInfo).openTooltip();
+                },
+                click: async function (e) {
+                    selectedCountry = feature.properties.ISO_A3;
+                    console.log('Selected country:', selectedCountry);
+                    const countryData = covidData.find(country => country.countryInfo.iso3 === selectedCountry);
+                    const countryInfo = countryData ? `
+                        <b>Country:</b> ${countryData.country}<br>
+                        <b>Total Cases:</b> ${countryData.cases}<br>
+                        <b>Active Cases:</b> ${countryData.active}<br>
+                        <b>Recovered Cases:</b> ${countryData.recovered}<br>
+                        <b>Deaths:</b> ${countryData.deaths}
+                    ` : 'No data available';
+                    document.getElementById('countryData').innerHTML = countryInfo;
+
+                    // Fetch and display vaccine data
+                    const vaccineData = await fetchVaccineData(selectedCountry);
+                    updateProgressBar(vaccineData);
+                }
+            });
+        }
+
+        // Fetch and display the data
+        let covidData = [];
+        let minCases = Infinity;
+        let maxCases = -Infinity;
+
+        fetchData(apiUrl).then(data => {
+            covidData = data;
+
+            // Determine min and max cases
+            console.log('Determining min and max cases');
+            covidData.forEach(country => {
+                if (country.cases < minCases) minCases = country.cases;
+                if (country.cases > maxCases) maxCases = country.cases;
+            });
+            console.log('Min cases:', minCases);
+            console.log('Max cases:', maxCases);
+
+            // Fetch GeoJSON data for country borders
+            console.log(`Fetching GeoJSON data from ${geoJsonUrl}`);
+            fetch(geoJsonUrl)
+                .then(response => response.json())
+                .then(geojsonData => {
+                    console.log('GeoJSON data fetched', geojsonData);
+                    L.geoJson(geojsonData, {
+                        style: function(feature) {
+                            return style(feature);
+                        },
+                        onEachFeature: onEachFeature
+                    }).addTo(map);
+                })
+                .catch(error => {
+                    console.error('Error fetching GeoJSON data:', error);
+                });
+        });
+
+        // Function to fetch vaccine data from the API
+        async function fetchVaccineData(country) {
+            const vaccineApiUrl = `https://disease.sh/v3/covid-19/vaccine/coverage/countries/${country}?lastdays=all&fullData=false`;
+            try {
+                console.log(`Fetching vaccine data from ${vaccineApiUrl}`);
+                const response = await fetch(vaccineApiUrl);
+                const data = await response.json();
+                console.log(`Vaccine data fetched from ${vaccineApiUrl}`, data);
+                return data;
+            } catch (error) {
+                console.error('Error fetching vaccine data from the API:', error);
+            }
+        }
+
+        // Function to update the progress bar
+        function updateProgressBar(vaccineData) {
+            const years = ['2020', '2021', '2022', '2023', '2024'];
+            const totalPopulation = vaccineData.timeline[years[years.length - 1]]; // Assuming the last year in the data has the total population
+            const percentages = years.map(year => (vaccineData.timeline[year] / totalPopulation) * 100);
+
+            // Update progress bar
+            const progressBarValue = document.getElementById('progressBarValue');
+            const progressBarText = document.getElementById('progressBarText');
+            const latestPercentage = percentages[percentages.length - 1];
+
+            progressBarValue.style.width = `${latestPercentage}%`;
+            progressBarText.textContent = `${latestPercentage.toFixed(1)}%`;
+
+            console.log('Vaccine percentages by year:', percentages);
+            console.log('Latest vaccine percentage:', latestPercentage);
+        }
+
+        // Handle form submission
+        document.getElementById('paramForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            if (selectedCountry) {
+                const yesterday = document.getElementById('yesterday').value;
+                const twoDaysAgo = '3yearsAgo';
+                const strict = 'true';
+                const allowNull = 'true';
+
+                const countryApiUrl = `https://disease.sh/v3/covid-19/countries/${selectedCountry}?yesterday=${yesterday}&twoDaysAgo=${twoDaysAgo}&strict=${strict}&allowNull=${allowNull}`;
+                console.log(`Fetching country-specific data from ${countryApiUrl}`);
+                
+                fetchData(countryApiUrl).then(data => {
+                    document.getElementById('countryData').innerHTML = `
+                        <h3>COVID-19 Data for ${data.country}</h3>
+                        <p><b>Country:</b> ${data.country}</p>
+                        <p><b>Cases:</b> ${data.cases}</p>
+                        <p><b>Deaths:</b> ${data.deaths}</p>
+                        <p><b>Recovered:</b> ${data.recovered}</p>
+                        <p><b>Active:</b> ${data.active}</p>
+                        <p><b>Critical:</b> ${data.critical}</p>
+                        <p><b>Tests:</b> ${data.tests}</p>
+                    `;
+                });
+            } else {
+                alert('Please select a country on the map.');
+            }
+        });
+    </script>
+    <script async data-id="2359192246" id="chatling-embed-script" type="text/javascript" src="https://chatling.ai/js/embed.js"></script>
+</body>
+</html>
